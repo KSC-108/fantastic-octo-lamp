@@ -1,0 +1,10 @@
+services:
+  octoquant:
+    build: .
+    restart: unless-stopped        # automatic restart after a crash or reboot
+    ports: ["8000:8000"]
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./artifacts:/app/artifacts
+      - ./reports:/app/reports
