@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OctoQuant Paper Desk</title>
+<style>
+:root {
+  --bg:#F3F6F7; --surface:#fff; --fg:#15222C; --muted:#566772; --rule:#D3DCE1;
+  --accent:#0E6B63; --accent-soft:#DCEEEB; --warn:#8A5700; --warn-soft:#F8EBD2;
+  --bad:#9C2B2B; --bad-soft:#F6DEDE; --off-soft:#E4EAED;
+  --mono: ui-monospace, "IBM Plex Mono", Menlo, Consolas, monospace;
+  --sans: "Public Sans", "Helvetica Neue", Arial, sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg:#0D151B; --surface:#131E26; --fg:#E3E9ED; --muted:#94A5B0; --rule:#26343E;
+  --accent:#4DB6A9; --accent-soft:#14302D; --warn:#E3B15C; --warn-soft:#33270F;
+  --bad:#E58A8A; --bad-soft:#351A1A; --off-soft:#1D2A33; color-scheme: dark; } }
+body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 var(--sans); }
+main { max-width:1100px; margin:0 auto; padding:24px 16px 64px; display:flex; flex-direction:column; gap:22px; }
+header { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:baseline; gap:8px 16px; border-bottom:2px solid var(--fg); padding-bottom:12px; }
+h1 { margin:0; font-size:22px; } h2 { margin:0 0 8px; font-size:13px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); font-family:var(--mono); font-weight:500; }
+.sub { font:12px var(--mono); color:var(--muted); }
+.tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; }
+.tile { background:var(--surface); border:1px solid var(--rule); border-radius:6px; padding:12px 14px; min-width:0; }
+.tile .k { font:11px var(--mono); letter-spacing:.06em; text-transform:uppercase; color:var(--muted); }
+.tile .v { font-size:22px; font-variant-numeric:tabular-nums; margin-top:2px; overflow-wrap:anywhere; }
+.pill { display:inline-block; font:11px var(--mono); padding:2px 8px; border-radius:999px; background:var(--off-soft); }
+.ok { background:var(--accent-soft); color:var(--accent); } .warn { background:var(--warn-soft); color:var(--warn); } .bad { background:var(--bad-soft); color:var(--bad); }
+.wrap { overflow-x:auto; background:var(--surface); border:1px solid var(--rule); border-radius:6px; }
+table { border-collapse:collapse; width:100%; min-width:560px; font-variant-numeric:tabular-nums; }
+th { text-align:left; font:11px var(--mono); letter-spacing:.06em; text-transform:uppercase; color:var(--muted); padding:8px 12px; border-bottom:1px solid var(--rule); white-space:nowrap; }
+td { padding:7px 12px; border-bottom:1px solid var(--rule); } tr:last-child td { border-bottom:none; }
+td.n, th.n { text-align:right; }
+.neg { color:var(--bad); } .pos { color:var(--accent); }
+#chart { background:var(--surface); border:1px solid var(--rule); border-radius:6px; padding:8px; }
+svg text { fill:var(--muted); font:10px var(--mono); }
+.banner { padding:10px 14px; border-radius:6px; background:var(--bad-soft); color:var(--bad); font-weight:600; }
+ul.ev { list-style:none; margin:0; padding:0; background:var(--surface); border:1px solid var(--rule); border-radius:6px; }
+ul.ev li { padding:7px 12px; border-bottom:1px solid var(--rule); display:flex; gap:10px; flex-wrap:wrap; } ul.ev li:last-child { border-bottom:none; }
+.empty { color:var(--muted); padding:14px; }
+@media (max-width:520px) { .tile .v { font-size:19px; } }
+</style>
+</head>
+<body>
+<main>
+  <header><h1>OctoQuant Paper Desk</h1><span class="sub" id="meta">loading</span></header>
+  <div id="banner" class="banner" hidden></div>
+  <section><div class="tiles" id="tiles"></div></section>
+  <section><h2>Equity</h2><div id="chart"></div></section>
+  <section><h2>Latest signals</h2><div class="wrap"><table id="signals"></table></div></section>
+  <section><h2>Open positions</h2><div class="wrap"><table id="positions"></table></div></section>
+  <section><h2>Recent trades</h2><div class="wrap"><table id="trades"></table></div></section>
+  <section><h2>Events</h2><ul class="ev" id="events"></ul></section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const fmt = (v, d=2) => v == null ? "n/a" : Number(v).toLocaleString("en-IN", {maximumFractionDigits:d, minimumFractionDigits:d});
+const pct = (v, d=1) => v == null ? "n/a" : (v*100).toFixed(d) + "%";
+function el(tag, text, cls) { const e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; }
+function table(node, cols, rows, empty) {
+  node.replaceChildren();
+  if (!rows.length) { const tr = el("tr"); const td = el("td", empty, "empty"); td.colSpan = cols.length; tr.append(td); node.append(tr); return; }
+  const thead = el("thead"), hr = el("tr");
+  cols.forEach(c => hr.append(el("th", c.h, c.n ? "n" : "")));
+  thead.append(hr); node.append(thead);
+  const tb = el("tbody");
+  rows.forEach(r => { const tr = el("tr"); cols.forEach(c => { const v = c.f(r); const td = el("td", v.t ?? v, (c.n ? "n " : "") + (v.c || "")); tr.append(td); }); tb.append(tr); });
+  node.append(tb);
+}
+function tile(k, v, cls) { const t = el("div", null, "tile"); t.append(el("div", k, "k")); const d = el("div", v, "v" + (cls ? " " + cls : "")); t.append(d); return t; }
+function chart(rows) {
+  const box = $("chart"); box.replaceChildren();
+  if (rows.length < 2) { box.append(el("div", "Equity curve appears after the first two daily runs.", "empty")); return; }
+  const W = 1000, H = 220, L = 64, R = 12, T = 12, B = 22;
+  const ys = rows.map(r => r.equity), lo = Math.min(...ys), hi = Math.max(...ys), pad = (hi - lo || 1) * 0.1;
+  const y0 = lo - pad, y1 = hi + pad;
+  const X = i => L + (W - L - R) * i / (rows.length - 1), Y = v => T + (H - T - B) * (1 - (v - y0) / (y1 - y0));
+  const ns = "http://www.w3.org/2000/svg", svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.setAttribute("width", "100%"); svg.setAttribute("role", "img"); svg.setAttribute("aria-label", "Equity curve");
+  const mk = (n, a) => { const e = document.createElementNS(ns, n); for (const k in a) e.setAttribute(k, a[k]); return e; };
+  for (let g = 0; g <= 3; g++) { const v = y0 + (y1 - y0) * g / 3, y = Y(v);
+    svg.append(mk("line", {x1:L, x2:W-R, y1:y, y2:y, stroke:"var(--rule)", "stroke-width":1}));
+    const t = mk("text", {x:L-6, y:y+3, "text-anchor":"end"}); t.textContent = fmt(v, 0); svg.append(t); }
+  const pts = rows.map((r, i) => `${X(i)},${Y(r.equity)}`).join(" ");
+  svg.append(mk("polygon", {points:`${L},${H-B} ${pts} ${W-R},${H-B}`, fill:"var(--accent-soft)", stroke:"none"}));
+  svg.append(mk("polyline", {points:pts, fill:"none", stroke:"var(--accent)", "stroke-width":2}));
+  svg.append(mk("circle", {cx:X(rows.length-1), cy:Y(ys[ys.length-1]), r:4, fill:"var(--accent)"}));
+  [0, rows.length-1].forEach(i => { const t = mk("text", {x:X(i), y:H-6, "text-anchor": i ? "end" : "start"}); t.textContent = rows[i].date; svg.append(t); });
+  box.append(svg);
+}
+async function refresh() {
+  try {
+    const [s, e] = await Promise.all([fetch("/api/state").then(r => r.json()), fetch("/api/equity").then(r => r.json())]);
+    $("meta").textContent = `${s.mode} · as of ${s.as_of ?? "no runs yet"} · strategy ${s.strategy.accepted ? "accepted" : (s.strategy.accepted === false ? "NOT accepted" : "none")} · data ${s.strategy.data_source ?? "n/a"}`;
+    const b = $("banner"); b.hidden = !s.kill_switch; b.textContent = s.kill_switch ? "KILL SWITCH ON: " + (s.kill_reason || "") : "";
+    const tiles = $("tiles"); tiles.replaceChildren(
+      tile("Equity (Rs)", fmt(s.equity, 0)),
+      tile("Day", pct(s.day_change, 2), s.day_change < 0 ? "neg" : "pos"),
+      tile("Drawdown", pct(s.drawdown, 2)),
+      tile("Exposure", pct(s.exposure, 0)),
+      tile("Calibration", s.calibration ? (s.calibration.ok ? "pass" : "FAIL") + " · " + s.calibration.source : "n/a", s.calibration && !s.calibration.ok ? "neg" : ""),
+      tile("Latency / decision", s.latency_ms == null ? "n/a" : fmt(s.latency_ms, 2) + " ms"));
+    chart(e);
+    table($("signals"), [
+      {h:"Symbol", f:r => r.symbol}, {h:"P(up)", n:1, f:r => fmt(r.p_up, 3)}, {h:"P(buy pressure)", n:1, f:r => fmt(r.p_bp, 3)},
+      {h:"Setup", n:1, f:r => fmt(r.sq, 3)}, {h:"P(bear)", n:1, f:r => fmt(r.p_bear, 3)}, {h:"P(stress)", n:1, f:r => fmt(r.p_stressed, 3)},
+      {h:"Size", n:1, f:r => pct(r.size_frac, 1)}, {h:"Action", f:r => ({t:r.action, c: r.action === "order" ? "pos" : ""})}],
+      s.decisions, "No decisions yet. Run the daily job.");
+    table($("positions"), [
+      {h:"Symbol", f:r => r.symbol}, {h:"Shares", n:1, f:r => fmt(r.shares, 0)}, {h:"Entry", n:1, f:r => fmt(r.entry_px)}, {h:"Last", n:1, f:r => fmt(r.last)},
+      {h:"P&L (Rs)", n:1, f:r => ({t:fmt(r.pnl, 0), c: r.pnl < 0 ? "neg" : "pos"})}, {h:"Days", n:1, f:r => r.days}, {h:"Stop", n:1, f:r => fmt(r.stop)}, {h:"Target", n:1, f:r => fmt(r.target)}],
+      s.positions, "Flat.");
+    table($("trades"), [
+      {h:"Symbol", f:r => r.symbol}, {h:"Entry", f:r => r.entry_date}, {h:"Exit", f:r => r.exit_date}, {h:"Return", n:1, f:r => ({t:pct(r.ret, 2), c: r.ret < 0 ? "neg" : "pos"})},
+      {h:"P&L (Rs)", n:1, f:r => fmt(r.pnl, 0)}, {h:"Reason", f:r => r.reason}],
+      s.trades, "No closed trades yet.");
+    const ev = $("events"); ev.replaceChildren();
+    if (!s.events.length) ev.append(el("li", "No events.", "empty"));
+    s.events.forEach(x => { const li = el("li"); li.append(el("span", x.level, "pill " + (x.level === "critical" ? "bad" : x.level === "warn" ? "warn" : "")), el("span", x.ts, "sub"), el("span", x.message)); ev.append(li); });
+  } catch (err) { $("meta").textContent = "dashboard could not load state: " + err; }
+}
+refresh(); setInterval(refresh, 10000);
+</script>
+</body>
+</html>

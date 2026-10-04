@@ -1,0 +1,12 @@
+# Real NSE daily data through jugaad-data (pip install -e ".[nse]").
+# Must run from a host that can reach nseindia.com. Data is cached in data/cache and fetched
+# incrementally. Using today's index constituents for past dates introduces survivorship bias.
+data:
+  source: nse
+  start: "2016-01-01"
+  cache_dir: data/cache
+
+runtime:
+  initial_equity: 1000000
+  run_after_ist: "16:10"
+  holidays: []

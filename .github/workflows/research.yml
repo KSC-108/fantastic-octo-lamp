@@ -1,0 +1,34 @@
+name: Research (manual)
+# Runs the full-size synthetic harness check, and optionally research on real NSE data.
+# NSE may block GitHub-hosted runner IP ranges: if the NSE step fails on network errors, run
+# `octoquant research` from a host that can reach nseindia.com instead.
+on:
+  workflow_dispatch:
+    inputs:
+      nse:
+        description: "Also run research on real NSE data"
+        type: boolean
+        default: false
+jobs:
+  harness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -e ".[dev,nse]"
+      - name: Full-size harness validation (null rejected, planted edge found)
+        run: pytest -m slow
+      - name: Research on NSE data
+        if: ${{ inputs.nse }}
+        run: octoquant --config config/nse.yaml --workdir out research
+      - uses: actions/upload-artifact@v4
+        if: ${{ inputs.nse }}
+        with:
+          name: research-output
+          path: |
+            out/strategy.md
+            out/artifacts/strategy.yaml
