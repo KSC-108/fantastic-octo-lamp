@@ -1,0 +1,24 @@
+{
+  "name": "splitcart",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Splits a grocery list across Indian quick-commerce platforms for the lowest total, with premium upgrades within a set tolerance.",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @splitcart/web",
+    "build": "npm run build -w @splitcart/web && npm run build -w @splitcart/extension",
+    "test": "npm test -w @splitcart/engine && npm test -w @splitcart/extension",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "plan": "npm run plan -w @splitcart/engine --"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "~5.8.3",
+    "vite": "^7.0.0",
+    "vitest": "^4.1.11"
+  }
+}

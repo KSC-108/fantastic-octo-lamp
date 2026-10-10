@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "SplitCart helper",
+  "version": "0.1.0",
+  "description": "Reads prices and fills carts for a SplitCart plan in your own logged-in sessions, at a person's pace. Never pays or places orders.",
+  "background": { "service_worker": "background.js", "type": "module" },
+  "permissions": ["storage", "tabs", "scripting"],
+  "host_permissions": [],
+  "externally_connectable": { "matches": ["http://localhost:5173/*", "http://localhost:4173/*"] }
+}
