@@ -32,3 +32,25 @@ costs:                           # ASSUMPTIONS: verify against your broker's con
   gst_pct: 0.18
   dp_charge_sell: 13.5
   slippage_bps: 5
+
+options:                         # index options backtest and paper book (`octoquant options ...`)
+  source: model                  # model (Black-Scholes on the underlying) or bhavcopy (NSE F&O files)
+  chain_dir: data/options        # bhavcopy CSVs, old or UDiFF format, any number of days
+  underlying_csv: null           # optional: date, open, high, low, close[, vix]
+  underlying: NIFTY
+  lot_size: 75                   # ASSUMPTION: NSE revises lot sizes; check the current circular
+  strike_step: 50
+  expiry_weekday: 1              # model chain only (0 = Monday). ASSUMPTION: NIFTY weekly on Tuesday
+  paper_enabled: false           # true: `serve` also steps the options paper book each trading day
+  strategy:
+    name: iron_condor            # see `octoquant options strategies`
+    width_steps: 4
+    wing_steps: 4
+    entry_dte: 7
+    stop_loss_mult: 1.5
+    take_profit_pct: 0.6
+  risk:
+    initial_capital: 1000000
+    risk_per_trade_pct: 0.02
+    max_margin_pct: 0.50
+    max_drawdown_pct: 0.25

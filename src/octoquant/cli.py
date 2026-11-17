@@ -110,16 +110,26 @@ def cmd_serve(args) -> int:
 
     cfg = _load(args)
     runner, store, notifier = _runner(cfg)
+    book = _options_book(cfg)[0]
     stop = threading.Event()
+
+    def daily(exp):
+        out = runner.run(exp)
+        if cfg.options.paper_enabled:
+            o = book.run()
+            level = "info" if o.status in ("ok", "up_to_date") else "warn"
+            store.log_event(level, f"[options] {o.status}: {o.message}")
+        return out
+
     if not args.no_scheduler:
         threading.Thread(
             target=scheduler_loop, daemon=True,
-            args=(lambda exp: runner.run(exp), lambda: store.get("last_attempt"),
+            args=(daily, lambda: store.get("last_attempt"),
                   lambda d: store.set("last_attempt", d), cfg, stop,
                   lambda m: (store.log_event("critical", m), notifier.send(m, "critical"))),
         ).start()
     _say(f"dashboard on http://{args.host}:{args.port}  ({DISCLAIMER})")
-    uvicorn.run(create_app(cfg, store, runner), host=args.host, port=args.port, log_level="info")
+    uvicorn.run(create_app(cfg, store, runner, book), host=args.host, port=args.port, log_level="info")
     stop.set()
     return 0
 
@@ -200,7 +210,139 @@ def cmd_demo(args) -> int:
     rep = run_preflight(cfg, store)
     write_preflight(rep, cfg)
     _say("\n" + render_preflight(rep))
-    _say(f"serve the dashboard with:  octoquant serve --workdir {Path(cfg.runtime.db_path).parent}")
+    _say(f"serve the dashboard with:  octoquant --workdir {Path(cfg.runtime.db_path).parent} serve")
+    return 0
+
+
+# ---- options -----------------------------------------------------------------------------------
+def _chain(cfg: Config):
+    from octoquant.options.chain import build_chain
+
+    if cfg.options.source == "model" and not cfg.options.underlying_csv:
+        return build_chain(cfg, load_panel(cfg).index)
+    return build_chain(cfg)
+
+
+def _options_book(cfg: Config, chain_fn=None):
+    from octoquant.options.paper import OptionsPaperBook
+
+    store, notifier = Store(cfg.runtime.db_path), Notifier()
+    return OptionsPaperBook(cfg, store, notifier, chain_fn or (lambda: _chain(cfg))), store
+
+
+def _run_option_backtests(cfg: Config, chain, names: list[str], start=None, end=None):
+    from octoquant.options.engine import run_options_backtest
+    from octoquant.options.paper import BACKTEST_KEY
+    from octoquant.options.report import backtest_payload, write_backtest_report
+
+    results = []
+    for n in names:
+        params = cfg.options.strategy.model_copy(update={"name": n})
+        r = run_options_backtest(chain, cfg, params, start, end)
+        results.append(r)
+        s = r.summary()
+        _say(f"  {s['label']:18s} {'PASS' if s['accepted'] else 'fail'}  return {s['total_return']:+7.1%}  "
+             f"sharpe {s['sharpe']:5.2f}  maxDD {s['max_drawdown']:6.1%}  hit {s['hit_rate']:4.0%}  "
+             f"trades {s['n_trades']:4.0f}")
+    store = Store(cfg.runtime.db_path)
+    store.set(BACKTEST_KEY, backtest_payload(results, cfg.options.strategy.name))
+    path = write_backtest_report(results, Path(cfg.runtime.reports_dir) / "options_backtest.md")
+    _say(f"report written to {path}; results stored for the dashboard")
+    return results
+
+
+def cmd_opt_backtest(args) -> int:
+    from octoquant.options.strategies import STRATEGIES
+
+    cfg = _load(args)
+    if args.strategy:
+        cfg.options.strategy.name = args.strategy
+    names = cfg.options.compare if args.all else [cfg.options.strategy.name]
+    if cfg.options.strategy.name not in names:
+        names = [cfg.options.strategy.name] + names
+    bad = [n for n in names if n not in STRATEGIES]
+    if bad:
+        _say(f"unknown strategy {bad}; see `octoquant options strategies`")
+        return 1
+    chain = _chain(cfg)
+    src = getattr(chain, "vol_source", getattr(chain, "spot_source", ""))
+    _say(f"options backtest on the {chain.name} chain ({src})")
+    if chain.name == "model":
+        _say("NOTE: model-priced options. Results show the machinery works; they are not evidence of an edge.")
+    _run_option_backtests(cfg, chain, names, pd.Timestamp(args.start) if args.start else None,
+                          pd.Timestamp(args.end) if args.end else None)
+    return 0
+
+
+def cmd_opt_paper_run(args) -> int:
+    cfg = _load(args)
+    book, _ = _options_book(cfg)
+    out = book.run(allow_unvalidated=args.allow_unvalidated)
+    _say(f"{out.status}: {out.message} equity={out.equity}")
+    return 0 if out.status in ("ok", "up_to_date") else 1
+
+
+def cmd_opt_ticket(args) -> int:
+    cfg = _load(args)
+    book, _ = _options_book(cfg)
+    ok, msg = book.ticket(args.strategy, args.expiry, args.lots, args.width, args.wing)
+    _say(msg)
+    return 0 if ok else 1
+
+
+def cmd_opt_close(args) -> int:
+    cfg = _load(args)
+    book, _ = _options_book(cfg)
+    ok = book.close(args.position_id)
+    _say("close queued for the next open" if ok else "no such open position")
+    return 0 if ok else 1
+
+
+def cmd_opt_kill(args) -> int:
+    cfg = _load(args)
+    book, _ = _options_book(cfg)
+    book.set_kill_switch(not args.resume, args.reason)
+    _say("options kill switch cleared" if args.resume else "options kill switch ON: positions close at the next open")
+    return 0
+
+
+def cmd_opt_strategies(args) -> int:
+    from octoquant.options.strategies import STRATEGIES
+
+    cfg = _load(args)
+    p = cfg.options.strategy
+    for s in STRATEGIES.values():
+        legs = ", ".join(f"{'+' if side > 0 else '-'}{kind}@{'ATM' if st == 0 else f'{st:+d}'}"
+                         for kind, side, st in s.offsets(p.width_steps, p.wing_steps))
+        _say(f"  {s.name:18s} {s.view:9s} {'credit' if s.credit else 'debit ':6s} "
+             f"{'defined' if s.defined_risk else 'UNDEFINED'} risk   {legs}")
+    _say(f"(offsets in strike steps of {cfg.options.strike_step:g}; width={p.width_steps}, wing={p.wing_steps})")
+    return 0
+
+
+def cmd_opt_demo(args) -> int:
+    """Synthetic underlying, model-priced options: compare strategies, then paper-trade the last days."""
+    from octoquant.options.chain import ModelChain
+
+    cfg = _load(args)
+    if not args.workdir:
+        wd = Path("demo_run")
+        cfg.runtime.db_path = str(wd / "octoquant.db")
+        cfg.runtime.reports_dir = str(wd / "reports")
+    _say("OPTIONS DEMO on SYNTHETIC data with model-priced options. " + DISCLAIMER)
+    full = generate_synthetic(cfg.universe.symbols[:20], years=args.years, seed=args.seed)
+    chain = ModelChain(full.index, cfg.options)
+    dates = chain.dates
+    hold = args.replay_days
+    _say(f"backtesting {len(cfg.options.compare)} strategies up to {dates[-hold - 1].date()}")
+    _run_option_backtests(cfg, chain, cfg.options.compare, end=dates[-hold - 1])
+    book, _ = _options_book(cfg, lambda: chain)
+    _say(f"\nreplaying {hold} held-out days through the options paper book ({cfg.options.strategy.name})")
+    for d in dates[-hold:]:
+        book.load_chain = lambda d=d: chain.truncate(d)
+        out = book.run(allow_unvalidated=True)
+        _say(f"  {d.date()} {out.status} equity={out.equity and round(out.equity):,} fills={out.fills}")
+    _say(f"serve the dashboard with:  octoquant --workdir {Path(cfg.runtime.db_path).parent} serve")
     return 0
 
 
@@ -240,6 +382,38 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--edge", type=float, default=0.003, help="planted synthetic edge (0 = none)")
     p.add_argument("--replay-days", type=int, default=30)
     p.set_defaults(fn=cmd_demo)
+
+    op = sub.add_parser("options", help="index options: backtest, paper book, tickets").add_subparsers(
+        dest="opt_cmd", required=True)
+    p = op.add_parser("backtest", help="backtest one strategy, or --all from options.compare")
+    p.add_argument("--strategy", default=None)
+    p.add_argument("--all", action="store_true")
+    p.add_argument("--start", default=None)
+    p.add_argument("--end", default=None)
+    p.set_defaults(fn=cmd_opt_backtest)
+    p = op.add_parser("paper-run", help="step the options paper book to the latest data")
+    p.add_argument("--allow-unvalidated", action="store_true")
+    p.set_defaults(fn=cmd_opt_paper_run)
+    p = op.add_parser("ticket", help="manual paper ticket, fills at the next open")
+    p.add_argument("strategy")
+    p.add_argument("--expiry", default=None, help="YYYY-MM-DD (default: nearest)")
+    p.add_argument("--lots", type=int, default=1)
+    p.add_argument("--width", type=int, default=None, help="short strikes, in strike steps from ATM")
+    p.add_argument("--wing", type=int, default=None, help="hedge distance, in strike steps")
+    p.set_defaults(fn=cmd_opt_ticket)
+    p = op.add_parser("close", help="close an options paper position at the next open")
+    p.add_argument("position_id", type=int)
+    p.set_defaults(fn=cmd_opt_close)
+    p = op.add_parser("kill", help="trip or clear the options kill switch")
+    p.add_argument("--resume", action="store_true")
+    p.add_argument("--reason", default="manual")
+    p.set_defaults(fn=cmd_opt_kill)
+    op.add_parser("strategies", help="list strategy templates").set_defaults(fn=cmd_opt_strategies)
+    p = op.add_parser("demo", help="synthetic options backtest plus paper replay")
+    p.add_argument("--years", type=float, default=6.0)
+    p.add_argument("--seed", type=int, default=12)
+    p.add_argument("--replay-days", type=int, default=30)
+    p.set_defaults(fn=cmd_opt_demo)
     args = ap.parse_args(argv)
     return args.fn(args)
 

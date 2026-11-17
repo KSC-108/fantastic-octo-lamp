@@ -143,6 +143,68 @@ class SlowBrainConfig(BaseModel):
     max_test_degradation: float = 0.10
 
 
+# ---- index options ---------------------------------------------------------------------------
+class OptionCostConfig(BaseModel):
+    """NSE index-option charges. Rates are ASSUMPTIONS as of late 2026: verify against your broker."""
+
+    brokerage_per_order: float = 20.0      # flat, per leg per fill
+    stt_sell_premium_pct: float = 0.001    # on premium, sell side
+    stt_exercise_pct: float = 0.00125      # on intrinsic value of exercised (ITM) long legs
+    exchange_txn_pct: float = 0.0003503    # on premium
+    sebi_pct: float = 0.000001
+    stamp_buy_pct: float = 0.00003         # on premium, buy side
+    gst_pct: float = 0.18                  # on brokerage + exchange + SEBI
+    slippage_pct: float = 0.01             # of premium, against you
+    min_slippage: float = 0.10             # rupees per unit (two ticks)
+
+
+class OptionRiskConfig(BaseModel):
+    initial_capital: float = 1_000_000.0
+    risk_per_trade_pct: float = 0.02       # rupee loss budget per position (max loss or stop loss)
+    max_margin_pct: float = 0.50           # blocked margin cap as a fraction of equity
+    naked_margin_pct: float = 0.12         # ASSUMPTION: SPAN+exposure per naked short lot, of notional
+    max_lots: int = 20
+    max_open_positions: int = 2
+    max_drawdown_pct: float = 0.25         # kill switch: flatten and halt
+
+
+class OptionStrategyParams(BaseModel):
+    name: str = "iron_condor"
+    width_steps: int = 4                   # short strikes this many strike steps from ATM
+    wing_steps: int = 4                    # long hedge this many steps beyond the short strike
+    entry_dte: int = 7                     # enter the first trading day with calendar DTE <= this
+    min_dte: int = 2                       # never enter with fewer calendar days than this
+    exit_dte: int = 0                      # exit at the open once DTE <= this (0 = hold to expiry)
+    stop_loss_mult: float = 1.5            # credit trades: exit when loss >= mult x entry credit
+    take_profit_pct: float = 0.6           # exit when profit >= this share of max profit
+    debit_stop_pct: float = 0.5            # debit trades: exit when loss >= this share of debit
+    min_iv_rank: float | None = None       # premium selling only when ATM IV rank (0-1) >= this
+    max_iv_rank: float | None = None       # premium buying only when ATM IV rank <= this
+
+
+class OptionsConfig(BaseModel):
+    source: Literal["model", "bhavcopy"] = "model"
+    paper_enabled: bool = False            # `serve` also steps the options paper book each day
+    underlying: str = "NIFTY"
+    chain_dir: str = "data/options"        # bhavcopy CSVs (old F&O or UDiFF format), any number
+    underlying_csv: str | None = None      # date, open, high, low, close[, vix]; else data.source index
+    lot_size: int = 75                     # ASSUMPTION: NSE revises lot sizes; check the current circular
+    strike_step: float = 50.0
+    expiry_weekday: int = 1                # model chain only: 0=Mon. ASSUMPTION: NIFTY weekly on Tuesday
+    expiry_cycle: Literal["weekly", "monthly"] = "weekly"
+    risk_free: float = 0.065
+    dividend_yield: float = 0.012
+    iv_multiplier: float = 1.0             # model chain without VIX: IV = realised vol x this
+    iv_floor: float = 0.08
+    skew: float = 0.0                      # model chain: sigma(K) = atm * (1 - skew * ln(K/S))
+    compare: list[str] = Field(default_factory=lambda: [
+        "iron_condor", "short_strangle", "short_straddle", "iron_butterfly",
+        "bull_put_spread", "long_straddle"])
+    costs: OptionCostConfig = Field(default_factory=OptionCostConfig)
+    risk: OptionRiskConfig = Field(default_factory=OptionRiskConfig)
+    strategy: OptionStrategyParams = Field(default_factory=OptionStrategyParams)
+
+
 class Config(BaseModel):
     universe: UniverseConfig = Field(default_factory=UniverseConfig)
     data: DataConfig = Field(default_factory=DataConfig)
@@ -156,6 +218,7 @@ class Config(BaseModel):
     research: ResearchConfig = Field(default_factory=ResearchConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     slow_brain: SlowBrainConfig = Field(default_factory=SlowBrainConfig)
+    options: OptionsConfig = Field(default_factory=OptionsConfig)
 
 
 def load_config(path: str | Path | None = None) -> Config:

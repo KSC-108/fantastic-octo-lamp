@@ -42,6 +42,19 @@ CREATE TABLE IF NOT EXISTS held_orders (
   id INTEGER PRIMARY KEY, date TEXT, symbol TEXT, notional REAL, atr_pct REAL,
   p_up REAL, p_win REAL, status TEXT DEFAULT 'pending'
 );
+CREATE TABLE IF NOT EXISTS opt_daily (
+  date TEXT PRIMARY KEY, equity REAL, cash REAL, margin REAL, exposure REAL, drawdown REAL,
+  spot REAL, atm_iv REAL, positions INTEGER, delta REAL, gamma REAL, vega REAL, theta REAL
+);
+CREATE TABLE IF NOT EXISTS opt_fills (
+  id INTEGER PRIMARY KEY, date TEXT, position_id INTEGER, strategy TEXT, expiry TEXT, kind TEXT,
+  strike REAL, side TEXT, qty INTEGER, price REAL, reason TEXT
+);
+CREATE TABLE IF NOT EXISTS opt_trades (
+  id INTEGER PRIMARY KEY, position_id INTEGER, strategy TEXT, expiry TEXT, entry_date TEXT,
+  exit_date TEXT, lots INTEGER, credit REAL, exit_value REAL, pnl REAL, ret REAL, costs REAL,
+  days INTEGER, reason TEXT, source TEXT
+);
 CREATE TABLE IF NOT EXISTS rules (
   id INTEGER PRIMARY KEY, ts TEXT, param TEXT, old_value REAL, new_value REAL,
   rationale TEXT, source TEXT, accepted INTEGER, detail TEXT
@@ -142,6 +155,18 @@ class Store:
         with self._conn() as c:
             c.execute("UPDATE decisions SET fwd_ret=?, y_up=?, resolved=1 WHERE date=? AND symbol=?",
                       (fwd_ret, y_up, date, symbol))
+
+    def insert_rows(self, table: str, rows: list[dict]) -> None:
+        """Insert dicts whose keys are column names. Table names are fixed by callers, never input."""
+        if not rows:
+            return
+        if table not in {"opt_daily", "opt_fills", "opt_trades"}:
+            raise ValueError(f"unknown table {table}")
+        cols = list(rows[0])
+        sql = (f"INSERT OR REPLACE INTO {table}({','.join(cols)}) "
+               f"VALUES({','.join(':' + c for c in cols)})")
+        with self._conn() as c:
+            c.executemany(sql, rows)
 
     # ---- reads -----------------------------------------------------------------------------
     def frame(self, sql: str, params: tuple = ()) -> pd.DataFrame:

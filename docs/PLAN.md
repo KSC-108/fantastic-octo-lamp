@@ -74,7 +74,12 @@ Consequences:
 | C12 | Preflight | Produces the "What could blow up this account?" report and refuses to clear until every gate is clean. | Built. |
 | C13 | Cloud | Dockerfile, GitHub Actions CI, deployment guide. | Written. Docker image and workflows were not run in the build session. |
 
-Out of scope for v1: live order placement, intraday and tick data, options and futures, shorting,
+| C14 | Options pricing | Black-Scholes price, greeks, implied volatility. | Built in v1.1. |
+| C15 | Options data | NSE F&O bhavcopy import (old and UDiFF formats), model chain on the underlying. | Built in v1.1. Not run on real bhavcopy files. |
+| C16 | Options backtest and paper book | Ten strategy templates, rule entry by DTE, stops and targets, cash settlement, margin-capped sizing, kill switch, manual tickets. One simulator step for both. | Built in v1.1. |
+| C17 | Dashboard charts | Drawdown, monthly heatmap, return distribution, greeks, payoff diagram, strategy comparison. | Built in v1.1. |
+
+Out of scope: live order placement, intraday and tick data, futures, stock shorting, SPAN margin,
 portfolio optimisation beyond per-name caps.
 
 ## 6. Architecture
